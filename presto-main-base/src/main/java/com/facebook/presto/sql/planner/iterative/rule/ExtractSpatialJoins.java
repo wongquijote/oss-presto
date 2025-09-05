@@ -46,6 +46,7 @@ import com.facebook.presto.spi.plan.PlanNode;
 import com.facebook.presto.spi.plan.PlanNodeId;
 import com.facebook.presto.spi.plan.ProjectNode;
 import com.facebook.presto.spi.plan.SpatialJoinNode;
+import com.facebook.presto.spi.plan.UnnestNode;
 import com.facebook.presto.spi.relation.CallExpression;
 import com.facebook.presto.spi.relation.RowExpression;
 import com.facebook.presto.spi.relation.VariableReferenceExpression;
@@ -56,7 +57,6 @@ import com.facebook.presto.split.SplitSource.SplitBatch;
 import com.facebook.presto.sql.planner.iterative.Rule;
 import com.facebook.presto.sql.planner.iterative.Rule.Context;
 import com.facebook.presto.sql.planner.iterative.Rule.Result;
-import com.facebook.presto.sql.planner.plan.UnnestNode;
 import com.facebook.presto.sql.relational.Expressions;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Splitter;
@@ -457,7 +457,7 @@ public class ExtractSpatialJoins
         return Result.ofPlanNode(new SpatialJoinNode(
                 joinNode.getSourceLocation(),
                 nodeId,
-                SpatialJoinNode.Type.fromJoinNodeType(joinNode.getType()),
+                SpatialJoinNode.SpatialJoinType.fromJoinNodeType(joinNode.getType()),
                 newLeftNode,
                 newRightNode,
                 outputVariables,
@@ -469,6 +469,11 @@ public class ExtractSpatialJoins
 
     private static boolean isSphericalJoin(Metadata metadata, RowExpression firstArgument, RowExpression secondArgument)
     {
+        // In sidecar-enabled clusters, SphericalGeography isn't a supported type.
+        // If SphericalGeography is not supported, it can be assumed that this join isn't a spherical join, hence returning False.
+        if (!metadata.getFunctionAndTypeManager().hasType(SPHERICAL_GEOGRAPHY_TYPE_SIGNATURE)) {
+            return false;
+        }
         Type sphericalGeographyType = metadata.getType(SPHERICAL_GEOGRAPHY_TYPE_SIGNATURE);
         return firstArgument.getType().equals(sphericalGeographyType) || secondArgument.getType().equals(sphericalGeographyType);
     }

@@ -38,6 +38,14 @@ Presto C++ workers.
 These Presto coordinator configuration properties are described here, in
 alphabetical order.
 
+``driver.max-split-preload``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+* **Type:** ``integer``
+* **Default value:** ``2``
+
+  Maximum number of splits to preload per driver.
+  Set to 0 to disable preloading.
+
 ``driver.cancel-tasks-with-stuck-operators-threshold-ms``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 * **Type:** ``string``
@@ -67,6 +75,7 @@ alphabetical order.
     - Custom type names are peeled in the coordinator. Only the actual base type is preserved.
     - ``CAST(col AS EnumType<T>)`` is rewritten as ``CAST(col AS <T>)``.
     - ``ENUM_KEY(EnumType<T>)`` is rewritten as ``ELEMENT_AT(MAP(<T>, VARCHAR))``.
+
   This property can only be enabled with native execution.
 
 ``optimizer.optimize-hash-generation``
@@ -217,6 +226,14 @@ avoid exceeding memory limits for the query.
 
 When ``spill_enabled`` is ``true``, this determines whether Presto will try spilling memory to disk for order by to
 avoid exceeding memory limits for the query.
+
+``local-exchange.max-partition-buffer-size``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``integer``
+* **Default value:** ``65536`` (64KB)
+
+  Specifies the maximum size in bytes to accumulate for a single partition of a local exchange before flushing.
 
 
 ``shared-arbitrator.reserved-capacity``

@@ -70,7 +70,8 @@ import static org.testng.Assert.assertTrue;
 
 public class PrestoNativeQueryRunnerUtils
 {
-    public enum QueryRunnerType {
+    public enum QueryRunnerType
+    {
         JAVA,
         NATIVE
     }
@@ -122,9 +123,11 @@ public class PrestoNativeQueryRunnerUtils
         private String security;
         private boolean addStorageFormatToPath;
         private boolean coordinatorSidecarEnabled;
+        private boolean builtInWorkerFunctionsEnabled;
         private boolean enableRuntimeMetricsCollection;
         private boolean enableSsdCache;
         private boolean failOnNestedLoopJoin;
+        private boolean implicitCastCharNToVarchar;
         // External worker launcher is applicable only for the native hive query runner, since it depends on other
         // properties it should be created once all the other query runner configs are set. This variable indicates
         // whether the query runner returned by builder should use an external worker launcher, it will be true only
@@ -176,8 +179,17 @@ public class PrestoNativeQueryRunnerUtils
 
         public HiveQueryRunnerBuilder setUseThrift(boolean useThrift)
         {
+            this.extraProperties.put("experimental.internal-communication.thrift-transport-enabled", String.valueOf(useThrift));
+            this.extraProperties.put("experimental.internal-communication.task-info-thrift-transport-enabled", String.valueOf(useThrift));
+            this.extraProperties.put("experimental.internal-communication.task-update-request-thrift-serde-enabled", String.valueOf(useThrift));
+            this.extraProperties.put("experimental.internal-communication.task-info-response-thrift-serde-enabled", String.valueOf(useThrift));
+            return this;
+        }
+
+        public HiveQueryRunnerBuilder setUseReactorNettyHttpClient(boolean useReactorNettyHttpClient)
+        {
             this.extraProperties
-                    .put("experimental.internal-communication.thrift-transport-enabled", String.valueOf(useThrift));
+                    .put("reactor.netty-http-client-enabled", String.valueOf(useReactorNettyHttpClient));
             return this;
         }
 
@@ -210,6 +222,12 @@ public class PrestoNativeQueryRunnerUtils
             return this;
         }
 
+        public HiveQueryRunnerBuilder setBuiltInWorkerFunctionsEnabled(boolean builtInWorkerFunctionsEnabled)
+        {
+            this.builtInWorkerFunctionsEnabled = builtInWorkerFunctionsEnabled;
+            return this;
+        }
+
         public HiveQueryRunnerBuilder setStorageFormat(String storageFormat)
         {
             this.storageFormat = storageFormat;
@@ -226,6 +244,12 @@ public class PrestoNativeQueryRunnerUtils
         public HiveQueryRunnerBuilder setCacheMaxSize(Integer cacheMaxSize)
         {
             this.cacheMaxSize = cacheMaxSize;
+            return this;
+        }
+
+        public HiveQueryRunnerBuilder setImplicitCastCharNToVarchar(boolean implicitCastCharNToVarchar)
+        {
+            this.implicitCastCharNToVarchar = implicitCastCharNToVarchar;
             return this;
         }
 
@@ -253,7 +277,7 @@ public class PrestoNativeQueryRunnerUtils
             Optional<BiFunction<Integer, URI, Process>> externalWorkerLauncher = Optional.empty();
             if (this.useExternalWorkerLauncher) {
                 externalWorkerLauncher = getExternalWorkerLauncher("hive", serverBinary, cacheMaxSize, remoteFunctionServerUds,
-                        failOnNestedLoopJoin, coordinatorSidecarEnabled, enableRuntimeMetricsCollection, enableSsdCache);
+                        failOnNestedLoopJoin, coordinatorSidecarEnabled, builtInWorkerFunctionsEnabled, enableRuntimeMetricsCollection, enableSsdCache, implicitCastCharNToVarchar);
             }
             return HiveQueryRunner.createQueryRunner(
                     ImmutableList.of(),
@@ -342,7 +366,7 @@ public class PrestoNativeQueryRunnerUtils
             Optional<BiFunction<Integer, URI, Process>> externalWorkerLauncher = Optional.empty();
             if (this.useExternalWorkerLauncher) {
                 externalWorkerLauncher = getExternalWorkerLauncher("iceberg", serverBinary, cacheMaxSize, remoteFunctionServerUds,
-                        false, false, false, false);
+                        false, false, false, false, false, false);
             }
             return IcebergQueryRunner.builder()
                     .setExtraProperties(extraProperties)
@@ -438,8 +462,10 @@ public class PrestoNativeQueryRunnerUtils
             Optional<String> remoteFunctionServerUds,
             Boolean failOnNestedLoopJoin,
             boolean isCoordinatorSidecarEnabled,
+            boolean isBuiltInWorkerFunctionsEnabled,
             boolean enableRuntimeMetricsCollection,
-            boolean enableSsdCache)
+            boolean enableSsdCache,
+            boolean implicitCastCharNToVarchar)
     {
         return
                 Optional.of((workerIndex, discoveryUri) -> {
@@ -459,6 +485,10 @@ public class PrestoNativeQueryRunnerUtils
                             configProperties = format("%s%n" +
                                     "native-sidecar=true%n" +
                                     "presto.default-namespace=native.default%n", configProperties);
+                        }
+                        else if (isBuiltInWorkerFunctionsEnabled) {
+                            configProperties = format("%s%n" +
+                                    "native-sidecar=true%n", configProperties);
                         }
 
                         if (enableRuntimeMetricsCollection) {
@@ -485,6 +515,10 @@ public class PrestoNativeQueryRunnerUtils
 
                         if (failOnNestedLoopJoin) {
                             configProperties = format("%s%n" + "velox-plan-validator-fail-on-nested-loop-join=true%n", configProperties);
+                        }
+
+                        if (implicitCastCharNToVarchar) {
+                            configProperties = format("%s%n" + "char-n-to-varchar-implicit-cast=true%n", configProperties);
                         }
 
                         Files.write(tempDirectoryPath.resolve("config.properties"), configProperties.getBytes());

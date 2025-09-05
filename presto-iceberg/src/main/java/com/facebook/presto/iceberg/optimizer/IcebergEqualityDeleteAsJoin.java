@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.iceberg.optimizer;
 
+import com.facebook.presto.common.RuntimeStats;
 import com.facebook.presto.common.function.OperatorType;
 import com.facebook.presto.common.predicate.TupleDomain;
 import com.facebook.presto.common.type.BigintType;
@@ -83,13 +84,17 @@ import static com.facebook.presto.hive.BaseHiveColumnHandle.ColumnType.REGULAR;
 import static com.facebook.presto.iceberg.FileContent.EQUALITY_DELETES;
 import static com.facebook.presto.iceberg.FileContent.fromIcebergFileContent;
 import static com.facebook.presto.iceberg.IcebergColumnHandle.DATA_SEQUENCE_NUMBER_COLUMN_HANDLE;
+import static com.facebook.presto.iceberg.IcebergColumnHandle.DELETE_FILE_PATH_COLUMN_HANDLE;
+import static com.facebook.presto.iceberg.IcebergColumnHandle.IS_DELETED_COLUMN_HANDLE;
 import static com.facebook.presto.iceberg.IcebergErrorCode.ICEBERG_FILESYSTEM_ERROR;
 import static com.facebook.presto.iceberg.IcebergMetadataColumn.DATA_SEQUENCE_NUMBER;
+import static com.facebook.presto.iceberg.IcebergSessionProperties.getDeleteAsJoinRewriteMaxDeleteColumns;
 import static com.facebook.presto.iceberg.IcebergSessionProperties.isDeleteToJoinPushdownEnabled;
 import static com.facebook.presto.iceberg.IcebergUtil.getDeleteFiles;
 import static com.facebook.presto.iceberg.IcebergUtil.getIcebergTable;
 import static com.facebook.presto.iceberg.TypeConverter.toPrestoType;
 import static com.facebook.presto.spi.ConnectorPlanRewriter.rewriteWith;
+import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -130,7 +135,9 @@ public class IcebergEqualityDeleteAsJoin
     @Override
     public PlanNode optimize(PlanNode maxSubplan, ConnectorSession session, VariableAllocator variableAllocator, PlanNodeIdAllocator idAllocator)
     {
-        if (!isDeleteToJoinPushdownEnabled(session)) {
+        int maxDeleteColumns = getDeleteAsJoinRewriteMaxDeleteColumns(session);
+        checkArgument(maxDeleteColumns >= 0, "maxDeleteColumns must be non-negative, got %s", maxDeleteColumns);
+        if (!isDeleteToJoinPushdownEnabled(session) || maxDeleteColumns == 0) {
             return maxSubplan;
         }
         return rewriteWith(new DeleteAsJoinRewriter(functionResolution,
@@ -175,6 +182,11 @@ public class IcebergEqualityDeleteAsJoin
                 return node;
             }
 
+            if (node.getAssignments().containsValue(IS_DELETED_COLUMN_HANDLE) || node.getAssignments().containsValue(DELETE_FILE_PATH_COLUMN_HANDLE)) {
+                // Skip this optimization if metadata columns `$deleted` or `$delete_file_path` exist
+                return node;
+            }
+
             IcebergAbstractMetadata metadata = (IcebergAbstractMetadata) transactionManager.get(table.getTransaction());
             Table icebergTable = getIcebergTable(metadata, session, icebergTableHandle.getSchemaTableName());
 
@@ -184,10 +196,14 @@ public class IcebergEqualityDeleteAsJoin
                     .orElseGet(TupleDomain::all);
 
             // Collect info about each unique delete schema to join by
-            ImmutableMap<Set<Integer>, DeleteSetInfo> deleteSchemas = collectDeleteInformation(icebergTable, predicate, tableName.getSnapshotId().get());
+            ImmutableMap<Set<Integer>, DeleteSetInfo> deleteSchemas = collectDeleteInformation(icebergTable, predicate, tableName.getSnapshotId().get(), session);
 
             if (deleteSchemas.isEmpty()) {
                 // no equality deletes
+                return node;
+            }
+            if (deleteSchemas.keySet().stream().anyMatch(equalityIds -> equalityIds.size() > getDeleteAsJoinRewriteMaxDeleteColumns(session))) {
+                // Too many fields in the delete schema, don't rewrite
                 return node;
             }
 
@@ -276,12 +292,15 @@ public class IcebergEqualityDeleteAsJoin
 
         private static ImmutableMap<Set<Integer>, DeleteSetInfo> collectDeleteInformation(Table icebergTable,
                 TupleDomain<IcebergColumnHandle> predicate,
-                long snapshotId)
+                long snapshotId,
+                ConnectorSession session)
+
         {
             // Delete schemas can repeat, so using a normal hashmap to dedup, will be converted to immutable at the end of the function.
             HashMap<Set<Integer>, DeleteSetInfo> deleteInformations = new HashMap<>();
+            RuntimeStats runtimeStats = session.getRuntimeStats();
             try (CloseableIterator<DeleteFile> files =
-                    getDeleteFiles(icebergTable, snapshotId, predicate, Optional.empty(), Optional.empty()).iterator()) {
+                    getDeleteFiles(icebergTable, snapshotId, predicate, Optional.empty(), Optional.empty(), runtimeStats).iterator()) {
                 files.forEachRemaining(delete -> {
                     if (fromIcebergFileContent(delete.content()) == EQUALITY_DELETES) {
                         ImmutableMap.Builder<Integer, PartitionFieldInfo> partitionFieldsBuilder = new ImmutableMap.Builder<>();

@@ -93,6 +93,10 @@ Property Name                                            Description            
 
 ``iceberg.hive.table-refresh.backoff-scale-factor``      The multiple used to scale subsequent wait time between       4.0
                                                          retries.
+
+``iceberg.engine.hive.lock-enabled``                     Whether to use locks to ensure atomicity of commits.          true
+                                                         This will turn off locks but is overridden at a table level
+                                                         with the table configuration ``engine.hive.lock-enabled``.
 ======================================================== ============================================================= ============
 
 Nessie catalog
@@ -358,6 +362,23 @@ Property Name                                           Description             
 
 ``iceberg.delete-as-join-rewrite-enabled``              When enabled, equality delete row filtering is applied        ``true``                           Yes                 No, Equality delete read is not supported
                                                         as a join with the data of the equality delete files.
+                                                        Deprecated: This property is deprecated and will be removed
+                                                        in a future release. Use the
+                                                        ``iceberg.delete-as-join-rewrite-max-delete-columns``
+                                                        configuration property instead.
+
+``iceberg.delete-as-join-rewrite-max-delete-columns``   When set to a number greater than 0, this property enables    ``400``                            Yes                 No, Equality delete read is not supported
+                                                        equality delete row filtering as a join with the data of the
+                                                        equality delete files. The value of this property is the
+                                                        maximum number of columns that can be used in the equality
+                                                        delete files. If the number of columns in the equality delete
+                                                        files exceeds this value, then the optimization is not
+                                                        applied and the equality delete files are applied directly to
+                                                        each row in the data files.
+
+                                                        This property is only applicable when
+                                                        ``iceberg.delete-as-join-rewrite-enabled`` is set to
+                                                        ``true``.
 
 ``iceberg.enable-parquet-dereference-pushdown``         Enable parquet dereference pushdown.                          ``true``                           Yes                 No
 
@@ -499,6 +520,12 @@ Property Name                                         Description               
 ===================================================== ======================================================================= =================== =============================================
 ``iceberg.delete_as_join_rewrite_enabled``            Overrides the behavior of the connector property                        Yes                 No, Equality delete read is not supported
                                                       ``iceberg.delete-as-join-rewrite-enabled`` in the current session.
+
+                                                      Deprecated: This property is deprecated and will be removed.  Use
+                                                      ``iceberg.delete_as_join_rewrite_max_delete_columns`` instead.
+``iceberg.delete_as_join_rewrite_max_delete_columns`` Overrides the behavior of the connector property                        Yes                 No, Equality delete read is not supported
+                                                      ``iceberg.delete-as-join-rewrite-max-delete-columns`` in the
+                                                      current session.
 ``iceberg.hive_statistics_merge_strategy``            Overrides the behavior of the connector property                        Yes                 Yes
                                                       ``iceberg.hive-statistics-merge-strategy`` in the current session.
 ``iceberg.rows_for_metadata_optimization_threshold``  Overrides the behavior of the connector property                        Yes                 Yes
@@ -514,7 +541,8 @@ Property Name                                         Description               
                                                       assign a split to. Splits which read data from the same file within
                                                       the same chunk will hash to the same node. A smaller chunk size will
                                                       result in a higher probability splits being distributed evenly across
-                                                      the cluster, but reduce locality.
+                                                      the cluster, but reduce locality. 
+                                                      See :ref:`develop/connectors:Node Selection Strategy`.
 ``iceberg.parquet_dereference_pushdown_enabled``      Overrides the behavior of the connector property                        Yes                 No
                                                       ``iceberg.enable-parquet-dereference-pushdown`` in the current session.
 ===================================================== ======================================================================= =================== =============================================
@@ -674,6 +702,42 @@ The Iceberg data sequence number in which this row was added.
              $data_sequence_number     |  regionkey
      ----------------------------------+------------
                   2                    | 3
+
+``$deleted`` column
+^^^^^^^^^^^^^^^^^^^
+Whether this row is a deleted row. When this column is used, deleted rows
+from delete files will be marked as ``true`` instead of being filtered out of the results.
+
+.. code-block:: sql
+
+    DELETE FROM "ctas_nation" WHERE regionkey = 0;
+
+    SELECT "$deleted", regionkey FROM "ctas_nation";
+
+.. code-block:: text
+
+     $deleted | regionkey
+    ----------+-----------
+     true     |         0
+     false    |         1
+
+``$delete_file_path`` column
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+The path of the delete file corresponding to a deleted row, or NULL if the row was not deleted.
+When this column is used, deleted rows will not be filtered out of the results.
+
+.. code-block:: sql
+
+    DELETE FROM "ctas_nation" WHERE regionkey = 0;
+
+    SELECT "$delete_file_path", regionkey FROM "ctas_nation";
+
+.. code-block:: text
+
+                                     $delete_file_path                                 | regionkey
+    -----------------------------------------------------------------------------------+-----------
+     file:/path/to/table/data/delete_file_d8510b3e-510a-4fc2-b2b2-e59ead7fd386.parquet |         0
+     NULL                                                                              |         1
 
 Presto C++ Support
 ^^^^^^^^^^^^^^^^^^
@@ -1421,6 +1485,12 @@ The table is partitioned by the transformed value of the column::
 
      ALTER TABLE iceberg.web.page_views ADD COLUMN ts timestamp WITH (partitioning = 'hour');
 
+Use ``ARRAY[...]`` instead of a string to specify multiple partition transforms when adding a column. For example::
+
+    ALTER TABLE iceberg.web.page_views ADD COLUMN location VARCHAR WITH (partitioning = ARRAY['truncate(2)', 'bucket(8)', 'identity']);
+
+    ALTER TABLE iceberg.web.page_views ADD COLUMN dt date WITH (partitioning = ARRAY['year', 'bucket(16)', 'identity']);
+
 Table properties can be modified for an Iceberg table using an ALTER TABLE SET PROPERTIES statement. Only `commit_retries` can be modified at present.
 For example, to set `commit_retries` to 6 for the table `iceberg.web.page_views_v2`, use::
 
@@ -2149,7 +2219,7 @@ Sorting can be combined with partitioning on the same column. For example::
         sorted_by = ARRAY['join_date']
     )
 
-The Iceberg connector does not support sort order transforms. The following sort order transformations are not supported:
+Sort order does not support transforms. The following transforms are not supported:
 
 .. code-block:: text
 

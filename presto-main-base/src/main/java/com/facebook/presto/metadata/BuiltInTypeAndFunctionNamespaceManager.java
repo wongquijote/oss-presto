@@ -13,7 +13,6 @@
  */
 package com.facebook.presto.metadata;
 
-import com.facebook.presto.UnknownTypeException;
 import com.facebook.presto.common.CatalogSchemaName;
 import com.facebook.presto.common.Page;
 import com.facebook.presto.common.QualifiedObjectName;
@@ -204,11 +203,6 @@ import com.facebook.presto.operator.scalar.VarbinaryFunctions;
 import com.facebook.presto.operator.scalar.WilsonInterval;
 import com.facebook.presto.operator.scalar.WordStemFunction;
 import com.facebook.presto.operator.scalar.queryplan.JsonPrestoQueryPlanFunctions;
-import com.facebook.presto.operator.scalar.sql.ArraySqlFunctions;
-import com.facebook.presto.operator.scalar.sql.MapNormalizeFunction;
-import com.facebook.presto.operator.scalar.sql.MapSqlFunctions;
-import com.facebook.presto.operator.scalar.sql.SimpleSamplingPercent;
-import com.facebook.presto.operator.scalar.sql.StringSqlFunctions;
 import com.facebook.presto.operator.window.CumulativeDistributionFunction;
 import com.facebook.presto.operator.window.DenseRankFunction;
 import com.facebook.presto.operator.window.FirstValueFunction;
@@ -236,6 +230,7 @@ import com.facebook.presto.spi.function.SqlFunction;
 import com.facebook.presto.spi.function.SqlFunctionVisibility;
 import com.facebook.presto.spi.function.SqlInvokedFunction;
 import com.facebook.presto.spi.function.SqlInvokedScalarFunctionImplementation;
+import com.facebook.presto.spi.type.UnknownTypeException;
 import com.facebook.presto.sql.analyzer.FunctionsConfig;
 import com.facebook.presto.type.BigintOperators;
 import com.facebook.presto.type.BooleanOperators;
@@ -292,13 +287,9 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableListMultimap;
-import com.google.common.collect.Multimap;
-import com.google.common.collect.Multimaps;
 import com.google.common.util.concurrent.UncheckedExecutionException;
+import com.google.errorprone.annotations.ThreadSafe;
 import io.airlift.slice.Slice;
-
-import javax.annotation.concurrent.ThreadSafe;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -557,6 +548,15 @@ public class BuiltInTypeAndFunctionNamespaceManager
             Set<Type> types,
             FunctionAndTypeManager functionAndTypeManager)
     {
+        this(blockEncodingSerde, functionsConfig, types, functionAndTypeManager, true);
+    }
+    public BuiltInTypeAndFunctionNamespaceManager(
+            BlockEncodingSerde blockEncodingSerde,
+            FunctionsConfig functionsConfig,
+            Set<Type> types,
+            FunctionAndTypeManager functionAndTypeManager,
+            boolean registerFunctions)
+    {
         this.functionAndTypeManager = requireNonNull(functionAndTypeManager, "functionAndTypeManager is null");
         this.magicLiteralFunction = new MagicLiteralFunction(blockEncodingSerde);
 
@@ -609,7 +609,9 @@ public class BuiltInTypeAndFunctionNamespaceManager
                 .expireAfterWrite(1, HOURS)
                 .build(CacheLoader.from(this::instantiateParametricType));
 
-        registerBuiltInFunctions(getBuiltInFunctions(functionsConfig));
+        if (registerFunctions) {
+            registerBuiltInFunctions(getBuiltInFunctions(functionsConfig));
+        }
         registerBuiltInTypes(functionsConfig);
 
         for (Type type : requireNonNull(types, "types is null")) {
@@ -987,12 +989,6 @@ public class BuiltInTypeAndFunctionNamespaceManager
                 .aggregate(ThetaSketchAggregationFunction.class)
                 .scalars(ThetaSketchFunctions.class)
                 .function(MergeTDigestFunction.MERGE)
-                .sqlInvokedScalar(MapNormalizeFunction.class)
-                .sqlInvokedScalars(ArraySqlFunctions.class)
-                .sqlInvokedScalars(ArrayIntersectFunction.class)
-                .sqlInvokedScalars(MapSqlFunctions.class)
-                .sqlInvokedScalars(SimpleSamplingPercent.class)
-                .sqlInvokedScalars(StringSqlFunctions.class)
                 .scalar(DynamicFilterPlaceholderFunction.class)
                 .scalars(EnumCasts.class)
                 .scalars(LongEnumOperators.class)
@@ -1279,6 +1275,18 @@ public class BuiltInTypeAndFunctionNamespaceManager
     }
 
     @Override
+    public boolean hasType(TypeSignature typeSignature)
+    {
+        try {
+            getType(typeSignature);
+            return true;
+        }
+        catch (UnknownTypeException e) {
+            return false;
+        }
+    }
+
+    @Override
     public Type getParameterizedType(String baseTypeName, List<TypeSignatureParameter> typeParameters)
     {
         throw new UnsupportedOperationException();
@@ -1394,44 +1402,6 @@ public class BuiltInTypeAndFunctionNamespaceManager
     private static class EmptyTransactionHandle
             implements FunctionNamespaceTransactionHandle
     {
-    }
-
-    private static class FunctionMap
-    {
-        private final Multimap<QualifiedObjectName, SqlFunction> functions;
-
-        public FunctionMap()
-        {
-            functions = ImmutableListMultimap.of();
-        }
-
-        public FunctionMap(FunctionMap map, Iterable<? extends SqlFunction> functions)
-        {
-            this.functions = ImmutableListMultimap.<QualifiedObjectName, SqlFunction>builder()
-                    .putAll(map.functions)
-                    .putAll(Multimaps.index(functions, function -> function.getSignature().getName()))
-                    .build();
-
-            // Make sure all functions with the same name are aggregations or none of them are
-            for (Map.Entry<QualifiedObjectName, Collection<SqlFunction>> entry : this.functions.asMap().entrySet()) {
-                Collection<SqlFunction> values = entry.getValue();
-                long aggregations = values.stream()
-                        .map(function -> function.getSignature().getKind())
-                        .filter(kind -> kind == AGGREGATE)
-                        .count();
-                checkState(aggregations == 0 || aggregations == values.size(), "'%s' is both an aggregation and a scalar function", entry.getKey());
-            }
-        }
-
-        public List<SqlFunction> list()
-        {
-            return ImmutableList.copyOf(functions.values());
-        }
-
-        public Collection<SqlFunction> get(QualifiedObjectName name)
-        {
-            return functions.get(name);
-        }
     }
 
     /**

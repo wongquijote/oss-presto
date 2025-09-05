@@ -21,6 +21,7 @@ import com.facebook.presto.common.type.TypeManager;
 import com.facebook.presto.common.type.TypeSignature;
 import com.facebook.presto.common.type.TypeSignatureParameter;
 import com.facebook.presto.common.type.VarcharType;
+import com.facebook.presto.spi.type.UnknownTypeException;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
@@ -45,6 +46,7 @@ import static com.facebook.presto.common.type.StandardTypes.BOOLEAN;
 import static com.facebook.presto.common.type.StandardTypes.DATE;
 import static com.facebook.presto.common.type.StandardTypes.DECIMAL;
 import static com.facebook.presto.common.type.StandardTypes.DOUBLE;
+import static com.facebook.presto.common.type.StandardTypes.GEOMETRY;
 import static com.facebook.presto.common.type.StandardTypes.HYPER_LOG_LOG;
 import static com.facebook.presto.common.type.StandardTypes.INTEGER;
 import static com.facebook.presto.common.type.StandardTypes.INTERVAL_DAY_TO_SECOND;
@@ -96,7 +98,8 @@ public class NativeTypeManager
                     INTERVAL_DAY_TO_SECOND,
                     INTERVAL_YEAR_TO_MONTH,
                     VARCHAR,
-                    UNKNOWN);
+                    UNKNOWN,
+                    GEOMETRY);
 
     private static final Set<String> NATIVE_ENGINE_SUPPORTED_PARAMETRIC_TYPES =
             ImmutableSet.of(
@@ -145,6 +148,18 @@ public class NativeTypeManager
         catch (UncheckedExecutionException e) {
             throwIfUnchecked(e.getCause());
             throw new RuntimeException(e.getCause());
+        }
+    }
+
+    @Override
+    public boolean hasType(TypeSignature typeSignature)
+    {
+        try {
+            getType(typeSignature);
+            return true;
+        }
+        catch (UnknownTypeException e) {
+            return false;
         }
     }
 

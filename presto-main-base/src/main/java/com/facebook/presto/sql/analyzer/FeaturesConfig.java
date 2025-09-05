@@ -17,6 +17,9 @@ import com.facebook.airlift.configuration.Config;
 import com.facebook.airlift.configuration.ConfigDescription;
 import com.facebook.airlift.configuration.DefunctConfig;
 import com.facebook.airlift.configuration.LegacyConfig;
+import com.facebook.airlift.units.DataSize;
+import com.facebook.airlift.units.Duration;
+import com.facebook.airlift.units.MaxDataSize;
 import com.facebook.presto.CompressionCodec;
 import com.facebook.presto.common.function.OperatorType;
 import com.facebook.presto.spi.function.FunctionMetadata;
@@ -24,28 +27,24 @@ import com.facebook.presto.sql.tree.CreateView;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
-import io.airlift.units.DataSize;
-import io.airlift.units.Duration;
-import io.airlift.units.MaxDataSize;
-
-import javax.validation.constraints.AssertTrue;
-import javax.validation.constraints.DecimalMax;
-import javax.validation.constraints.DecimalMin;
-import javax.validation.constraints.Min;
-import javax.validation.constraints.NotNull;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 
+import static com.facebook.airlift.units.DataSize.Unit.KILOBYTE;
+import static com.facebook.airlift.units.DataSize.Unit.MEGABYTE;
 import static com.facebook.presto.sql.analyzer.FeaturesConfig.AggregationPartitioningMergingStrategy.LEGACY;
 import static com.facebook.presto.sql.analyzer.FeaturesConfig.JoinNotNullInferenceStrategy.NONE;
 import static com.facebook.presto.sql.analyzer.FeaturesConfig.TaskSpillingStrategy.ORDER_BY_CREATE_TIME;
 import static com.facebook.presto.sql.expressions.ExpressionOptimizerManager.DEFAULT_EXPRESSION_OPTIMIZER_NAME;
 import static com.facebook.presto.sql.tree.CreateView.Security.DEFINER;
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static io.airlift.units.DataSize.Unit.KILOBYTE;
-import static io.airlift.units.DataSize.Unit.MEGABYTE;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -106,6 +105,7 @@ public class FeaturesConfig
     private String historyBasedOptimizerPlanCanonicalizationStrategies = "IGNORE_SAFE_CONSTANTS";
     private boolean logPlansUsedInHistoryBasedOptimizer;
     private boolean enforceTimeoutForHBOQueryRegistration;
+    private boolean historyBasedOptimizerEstimateSizeUsingVariables;
     private boolean redistributeWrites;
     private boolean scaleWriters = true;
     private DataSize writerMinSize = new DataSize(32, MEGABYTE);
@@ -194,7 +194,7 @@ public class FeaturesConfig
     private boolean treatLowConfidenceZeroEstimationAsUnknownEnabled;
     private boolean pushdownDereferenceEnabled;
     private boolean inlineSqlFunctions = true;
-    private boolean checkAccessControlOnUtilizedColumnsOnly;
+    private boolean checkAccessControlOnUtilizedColumnsOnly = true;
     private boolean checkAccessControlWithSubfields;
     private boolean skipRedundantSort = true;
     private boolean isAllowWindowOrderByLiterals = true;
@@ -226,6 +226,7 @@ public class FeaturesConfig
 
     private boolean streamingForPartialAggregationEnabled;
     private boolean preferMergeJoinForSortedInputs;
+    private boolean preferSortMergeJoin;
     private boolean segmentedAggregationEnabled;
 
     private int maxStageCountForEagerScheduling = 25;
@@ -269,6 +270,7 @@ public class FeaturesConfig
     private boolean pullUpExpressionFromLambda;
     private boolean rewriteConstantArrayContainsToIn;
     private boolean rewriteExpressionWithConstantVariable = true;
+    private boolean optimizeConditionalApproxDistinct = true;
 
     private boolean preProcessMetadataCalls;
     private boolean handleComplexEquiJoins;
@@ -305,6 +307,10 @@ public class FeaturesConfig
     private String expressionOptimizerName = DEFAULT_EXPRESSION_OPTIMIZER_NAME;
     private boolean addExchangeBelowPartialAggregationOverGroupId;
     private boolean addDistinctBelowSemiJoinBuild;
+    private boolean pushdownSubfieldForMapFunctions = true;
+    private long maxSerializableObjectSize = 1000;
+
+    private boolean builtInSidecarFunctionsEnabled;
 
     public enum PartitioningPrecisionStrategy
     {
@@ -885,6 +891,18 @@ public class FeaturesConfig
     public FeaturesConfig setEnforceTimeoutForHBOQueryRegistration(boolean enforceTimeoutForHBOQueryRegistration)
     {
         this.enforceTimeoutForHBOQueryRegistration = enforceTimeoutForHBOQueryRegistration;
+        return this;
+    }
+
+    public boolean isHistoryBasedOptimizerEstimateSizeUsingVariables()
+    {
+        return historyBasedOptimizerEstimateSizeUsingVariables;
+    }
+
+    @Config("optimizer.history-based-optimizer-estimate-size-using-variables")
+    public FeaturesConfig setHistoryBasedOptimizerEstimateSizeUsingVariables(boolean historyBasedOptimizerEstimateSizeUsingVariables)
+    {
+        this.historyBasedOptimizerEstimateSizeUsingVariables = historyBasedOptimizerEstimateSizeUsingVariables;
         return this;
     }
 
@@ -2217,6 +2235,19 @@ public class FeaturesConfig
         return this;
     }
 
+    public boolean isPreferSortMergeJoin()
+    {
+        return preferSortMergeJoin;
+    }
+
+    @Config("experimental.optimizer.prefer-sort-merge-join")
+    @ConfigDescription("Prefer sort merge join for all joins. A SortNode is added if input is not already sorted.")
+    public FeaturesConfig setPreferSortMergeJoin(boolean preferSortMergeJoin)
+    {
+        this.preferSortMergeJoin = preferSortMergeJoin;
+        return this;
+    }
+
     public boolean isSegmentedAggregationEnabled()
     {
         return segmentedAggregationEnabled;
@@ -2787,6 +2818,19 @@ public class FeaturesConfig
         return this;
     }
 
+    public boolean isOptimizeConditionalApproxDistinct()
+    {
+        return this.optimizeConditionalApproxDistinct;
+    }
+
+    @Config("optimizer.optimize-constant-approx-distinct")
+    @ConfigDescription("Optimize out APPROX_DISTINCT over conditional constant expressions")
+    public FeaturesConfig setOptimizeConditionalApproxDistinct(boolean optimizeConditionalApproxDistinct)
+    {
+        this.optimizeConditionalApproxDistinct = optimizeConditionalApproxDistinct;
+        return this;
+    }
+
     public CreateView.Security getDefaultViewSecurityMode()
     {
         return this.defaultViewSecurityMode;
@@ -2942,6 +2986,7 @@ public class FeaturesConfig
     {
         return inEqualityJoinPushdownEnabled;
     }
+
     public boolean isPrestoSparkExecutionEnvironment()
     {
         return prestoSparkExecutionEnvironment;
@@ -3041,5 +3086,44 @@ public class FeaturesConfig
     public boolean isAddDistinctBelowSemiJoinBuild()
     {
         return addDistinctBelowSemiJoinBuild;
+    }
+
+    @Config("optimizer.pushdown-subfield-for-map-functions")
+    @ConfigDescription("Enable subfield pruning for map functions, currently include map_subset and map_filter")
+    public FeaturesConfig setPushdownSubfieldForMapFunctions(boolean pushdownSubfieldForMapFunctions)
+    {
+        this.pushdownSubfieldForMapFunctions = pushdownSubfieldForMapFunctions;
+        return this;
+    }
+
+    public boolean isPushdownSubfieldForMapFunctions()
+    {
+        return pushdownSubfieldForMapFunctions;
+    }
+
+    @Config("max_serializable_object_size")
+    @ConfigDescription("Configure the maximum byte size of a serializable object in expression interpreters")
+    public FeaturesConfig setMaxSerializableObjectSize(long maxSerializableObjectSize)
+    {
+        this.maxSerializableObjectSize = maxSerializableObjectSize;
+        return this;
+    }
+
+    public long getMaxSerializableObjectSize()
+    {
+        return maxSerializableObjectSize;
+    }
+
+    @Config("built-in-sidecar-functions-enabled")
+    @ConfigDescription("Enable using CPP functions from sidecar over coordinator SQL implementations.")
+    public FeaturesConfig setBuiltInSidecarFunctionsEnabled(boolean builtInSidecarFunctionsEnabled)
+    {
+        this.builtInSidecarFunctionsEnabled = builtInSidecarFunctionsEnabled;
+        return this;
+    }
+
+    public boolean isBuiltInSidecarFunctionsEnabled()
+    {
+        return this.builtInSidecarFunctionsEnabled;
     }
 }

@@ -14,10 +14,10 @@
 package com.facebook.presto.router.scheduler;
 
 import com.facebook.airlift.configuration.Config;
+import com.facebook.airlift.units.Duration;
+import com.facebook.airlift.units.MinDuration;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Streams;
-import io.airlift.units.Duration;
-import io.airlift.units.MinDuration;
 
 import java.net.URI;
 import java.util.List;
@@ -33,6 +33,7 @@ public class PlanCheckerRouterPluginConfig
     private URI javaRouterURI;
     private URI nativeRouterURI;
     private Duration clientRequestTimeout = new Duration(2, MINUTES);
+    private boolean javaClusterFallbackEnabled;
 
     @Config("plan-check-clusters-uris")
     public PlanCheckerRouterPluginConfig setPlanCheckClustersURIs(String uris)
@@ -87,6 +88,18 @@ public class PlanCheckerRouterPluginConfig
     public PlanCheckerRouterPluginConfig setClientRequestTimeout(Duration clientRequestTimeout)
     {
         this.clientRequestTimeout = clientRequestTimeout;
+        return this;
+    }
+
+    public boolean isJavaClusterFallbackEnabled()
+    {
+        return javaClusterFallbackEnabled;
+    }
+
+    @Config("enable-java-cluster-fallback")
+    public PlanCheckerRouterPluginConfig setJavaClusterFallbackEnabled(boolean javaClusterFallbackEnabled)
+    {
+        this.javaClusterFallbackEnabled = javaClusterFallbackEnabled;
         return this;
     }
 }

@@ -54,6 +54,7 @@ target_link_libraries(
   $<TARGET_OBJECTS:presto_type_converter>
   $<TARGET_OBJECTS:presto_types>
   presto_operators
+  presto_mutable_configs
   presto_type_test_utils
   velox_core
   velox_dwio_common_exception
@@ -66,9 +67,9 @@ target_link_libraries(
   velox_tpch_connector
   velox_hive_partition_function
   velox_presto_serializer
+  velox_presto_type_parser
   velox_serialization
   velox_type
-  velox_type_parser
   Boost::filesystem
   ${RE2}
   ${FOLLY_WITH_DEPENDENCIES}
