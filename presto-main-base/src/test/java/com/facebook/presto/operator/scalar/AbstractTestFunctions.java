@@ -168,7 +168,7 @@ public abstract class AbstractTestFunctions
         functionAssertions.assertInvalidFunction(projection, errorCode, messagePattern);
     }
 
-    protected void assertInvalidFunction(String projection, String messagePattern)
+    public void assertInvalidFunction(String projection, String messagePattern)
     {
         functionAssertions.assertInvalidFunction(projection, INVALID_FUNCTION_ARGUMENT, messagePattern);
     }

@@ -15,6 +15,8 @@ package com.facebook.presto.nativetests.operator.scalar;
 
 import com.facebook.presto.common.type.Type;
 import com.facebook.presto.nativetests.NativeTestsUtils;
+import com.facebook.presto.spi.PrestoException;
+import com.facebook.presto.spi.StandardErrorCode;
 import com.facebook.presto.testing.MaterializedResult;
 import com.facebook.presto.testing.QueryRunner;
 import com.facebook.presto.tests.AbstractTestQueryFramework;
@@ -27,10 +29,12 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static com.facebook.presto.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static com.facebook.presto.testing.assertions.Assert.assertEquals;
 import static com.facebook.presto.tests.QueryAssertions.assertExceptionMessage;
 import static java.lang.Boolean.parseBoolean;
 import static java.lang.String.format;
+import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
 public abstract class AbstractTestNativeFunctions
@@ -77,6 +81,31 @@ public abstract class AbstractTestNativeFunctions
         }
         catch (RuntimeException ex) {
             assertExceptionMessage(rewritten, ex, message, true);
+        }
+    }
+
+    @Override
+    public void assertInvalidFunction(String projection, String messagePattern)
+    {
+        assertInvalidFunction(projection, INVALID_FUNCTION_ARGUMENT, messagePattern);
+    }
+
+    protected void assertInvalidFunction(String projection, StandardErrorCode errorCode, String messagePattern)
+    {
+        try {
+            String query = "SELECT " + projection;
+            MaterializedResult result = computeActual(query);
+            fail("Expected to throw exception with message matching " + messagePattern + " but got " + result);
+        }
+        catch (PrestoException e) {
+            try {
+                assertEquals(e.getErrorCode(), errorCode.toErrorCode());
+                assertTrue(e.getMessage().equals(messagePattern) || e.getMessage().matches(messagePattern), format("Error message [%s] doesn't match [%s]", e.getMessage(), messagePattern));
+            }
+            catch (Throwable failure) {
+                failure.addSuppressed(e);
+                throw failure;
+            }
         }
     }
 
