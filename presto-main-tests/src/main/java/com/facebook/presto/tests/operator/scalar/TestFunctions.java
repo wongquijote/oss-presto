@@ -27,4 +27,6 @@ public interface TestFunctions
      * Asserts that the projection is not supported and that it fails with the expected error message.
      */
     void assertNotSupported(String projection, String message);
+
+    void assertInvalidFunction(String projection, String messagePattern);
 }
