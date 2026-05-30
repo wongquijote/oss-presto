@@ -51,4 +51,16 @@ public abstract class AbstractTestNativeTvfFunctions
     {
         assertQuery("SELECT * FROM TABLE(exclude_columns(input => TABLE(region), columns => DESCRIPTOR(regionkey, comment)))");
     }
+
+    @Test
+    public void testExcludeColumnsWithSelection()
+    {
+        assertQuery("SELECT name FROM TABLE(exclude_columns(input => TABLE(region), columns => DESCRIPTOR(regionkey, comment)))");
+    }
+
+    @Test
+    public void testExcludeColumnsWithPredicate()
+    {
+        assertQuery("SELECT * FROM TABLE(exclude_columns(input => TABLE(region), columns => DESCRIPTOR(comment))) WHERE regionkey > 1");
+    }
 }
