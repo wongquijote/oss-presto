@@ -355,10 +355,15 @@ size_t TableFunctionPartition::getNumProperColumns(
 
 RowVectorPtr TableFunctionPartition::appendPassThroughColumns(
     const velox::RowVectorPtr& functionOutput) const {
-  VELOX_CHECK_NOT_NULL(functionOutput);
-  if (passThroughSpecifications_.empty()) {
-    return functionOutput;
-  }
+  // The function output vector carries column names inherited from the input
+  // table (e.g. "id"). Wrap it in a RowVector typed by outputType_ so that the
+  // emitted vector carries the declared properOutput names (e.g. "id_0").
+  // Without this relabeling, downstream operators that resolve column
+  // references by name (filter predicates, projections) fail because the
+  // runtime vector names don't match the operator's declared output type.
+  VELOX_CHECK_EQ(
+      functionOutput->children().size() + passThroughSpecifications_.size(),
+      outputType_->size());
 
   auto numOutputRows = functionOutput->size();
 
